@@ -185,28 +185,29 @@ describe('getMessagesSince', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // Should exclude m1, m2 (before/at timestamp), m3 (bot message)
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].content).toBe('third');
+    // Should include m3 (bot message) and m4 (third)
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toBe('bot reply');
+    expect(msgs[1].content).toBe('third');
   });
 
-  it('excludes bot messages via is_bot_message flag', () => {
+  it('includes bot messages via is_bot_message flag', () => {
     const msgs = getMessagesSince(
       'group@g.us',
       '2024-01-01T00:00:00.000Z',
       'Andy',
     );
     const botMsgs = msgs.filter((m) => m.content === 'bot reply');
-    expect(botMsgs).toHaveLength(0);
+    expect(botMsgs).toHaveLength(1);
   });
 
-  it('returns all non-bot messages when sinceTimestamp is empty', () => {
+  it('returns all messages when sinceTimestamp is empty', () => {
     const msgs = getMessagesSince('group@g.us', '', 'Andy');
-    // 3 user messages (bot message excluded)
-    expect(msgs).toHaveLength(3);
+    // 4 messages (including bot message)
+    expect(msgs).toHaveLength(4);
   });
 
-  it('filters pre-migration bot messages via content prefix backstop', () => {
+  it('includes pre-migration bot messages', () => {
     // Simulate a message written before migration: has prefix but is_bot_message = 0
     store({
       id: 'm5',
@@ -221,7 +222,7 @@ describe('getMessagesSince', () => {
       '2024-01-01T00:00:04.000Z',
       'Andy',
     );
-    expect(msgs).toHaveLength(0);
+    expect(msgs).toHaveLength(1);
   });
 });
 
@@ -270,11 +271,11 @@ describe('getNewMessages', () => {
   it('returns new messages across multiple groups', () => {
     const { messages, newTimestamp } = getNewMessages(
       ['group1@g.us', 'group2@g.us'],
-      '2024-01-01T00:00:00.000Z',
+      '',
       'Andy',
     );
-    // Excludes bot message, returns 3 user messages
-    expect(messages).toHaveLength(3);
+    // Includes bot message, returns 4 messages total
+    expect(messages).toHaveLength(4);
     expect(newTimestamp).toBe('2024-01-01T00:00:04.000Z');
   });
 
@@ -284,9 +285,10 @@ describe('getNewMessages', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // Only g1 msg2 (after ts, not bot)
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('g1 msg2');
+    // Includes g1 msg2 and bot reply
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toBe('bot reply');
+    expect(messages[1].content).toBe('g1 msg2');
   });
 
   it('returns empty for no registered groups', () => {

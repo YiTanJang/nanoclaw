@@ -836,10 +836,8 @@ async function runAgentPod(
 
     const resolveFirstOutput = (parsed: ContainerOutput) => {
       if (firstOutputResolved) return;
-      if (parsed.status === 'success' && parsed.result !== null) {
-        firstOutputResolved = true;
-        _resolveFirstOutput(parsed);
-      }
+      firstOutputResolved = true;
+      _resolveFirstOutput(parsed);
     };
 
     const processedResults = new Set<string>();
@@ -953,7 +951,6 @@ async function runAgentPod(
           if (startIdx !== -1 && endIdx !== -1) {
             const jsonStr = logs.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
             const parsed = JSON.parse(jsonStr) as ContainerOutput;
-            firstOutputResolved = true;
             resolveFirstOutput(parsed);
             return parsed;
           }
@@ -961,7 +958,6 @@ async function runAgentPod(
           logger.error({ err, podName }, 'Failed to read final pod logs');
         }
         const errResult: ContainerOutput = { status: 'error', result: null, error: 'Pod finished without output markers' };
-        firstOutputResolved = true;
         resolveFirstOutput(errResult);
         return errResult;
       }

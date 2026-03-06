@@ -267,17 +267,30 @@ export async function processTaskIpc(
           }
         } else if (scheduleType === 'interval') {
           const ms = parseInt(data.schedule_value, 10);
+          if (isNaN(ms) || ms <= 0) {
+            logger.warn({ scheduleValue: data.schedule_value }, 'Invalid interval');
+            break;
+          }
           nextRun = new Date(Date.now() + ms).toISOString();
         } else if (scheduleType === 'once') {
           if (data.schedule_value === 'now') {
             nextRun = new Date().toISOString();
           } else {
-            nextRun = new Date(data.schedule_value).toISOString();
+            const d = new Date(data.schedule_value);
+            if (isNaN(d.getTime())) {
+              logger.warn({ scheduleValue: data.schedule_value }, 'Invalid date');
+              break;
+            }
+            nextRun = d.toISOString();
           }
         }
 
-        const taskId = createTask({
-          id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        const validContextModes = ['isolated', 'group'];
+        const contextMode = validContextModes.includes(data.context_mode) ? data.context_mode : 'isolated';
+
+        const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        createTask({
+          id: taskId,
           chat_jid: targetJid,
           group_folder: targetFolder,
           prompt: data.prompt,
@@ -286,7 +299,7 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
-          context_mode: (data.context_mode as any) || 'group',
+          context_mode: contextMode as any,
         });
 
         logger.info(
@@ -299,20 +312,29 @@ export async function processTaskIpc(
       break;
 
     case 'pause_task':
-      if (data.taskId && isMain) {
-        updateTask(data.taskId, { status: 'paused' });
+      if (data.taskId) {
+        const task = getTaskById(data.taskId);
+        if (isMain || (task && task.group_folder === sourceGroup)) {
+          updateTask(data.taskId, { status: 'paused' });
+        }
       }
       break;
 
     case 'resume_task':
-      if (data.taskId && isMain) {
-        updateTask(data.taskId, { status: 'active' });
+      if (data.taskId) {
+        const task = getTaskById(data.taskId);
+        if (isMain || (task && task.group_folder === sourceGroup)) {
+          updateTask(data.taskId, { status: 'active' });
+        }
       }
       break;
 
     case 'cancel_task':
-      if (data.taskId && isMain) {
-        deleteTask(data.taskId);
+      if (data.taskId) {
+        const task = getTaskById(data.taskId);
+        if (isMain || (task && task.group_folder === sourceGroup)) {
+          deleteTask(data.taskId);
+        }
       }
       break;
 
