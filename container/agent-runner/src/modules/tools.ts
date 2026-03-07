@@ -5,7 +5,6 @@ import { CronExpressionParser } from 'cron-parser';
 import { 
   IPC_MESSAGES_DIR, 
   TASKS_DIR, 
-  MEMORY_DIR,
   ContainerInput 
 } from './types.js';
 import { updateMemory, recallMemory } from './memory.js';
@@ -170,6 +169,96 @@ export const toolDeclarations = [
       required: ['category', 'content'],
     },
   },
+  {
+    name: 'schedule_task',
+    description: 'Schedule a recurring or one-time AI task.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        prompt: { type: 'STRING' as const, description: 'Task prompt' },
+        schedule_type: { type: 'STRING' as const, description: 'cron | interval | once' },
+        schedule_value: { type: 'STRING' as const, description: 'Cron expression, ms, or timestamp' },
+        context_mode: { type: 'STRING' as const, description: 'group | isolated' },
+        targetJid: { type: 'STRING' as const, description: 'Optional target JID' },
+      },
+      required: ['prompt', 'schedule_type', 'schedule_value'],
+    },
+  },
+  {
+    name: 'create_discord_thread',
+    description: 'Create a new Discord thread and bind an autonomous sub-agent to it.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        name: { type: 'STRING' as const, description: 'Thread name' },
+        parentJid: { type: 'STRING' as const, description: 'Parent channel JID' },
+        folder: { type: 'STRING' as const, description: 'Sub-agent folder' },
+        systemInstruction: { type: 'STRING' as const, description: 'Agent instructions' },
+        ephemeral: { type: 'BOOLEAN' as const, description: 'Delete on unregister' }
+      },
+      required: ['name', 'parentJid', 'folder', 'systemInstruction'],
+    },
+  },
+  {
+    name: 'rebuild_self',
+    description: 'Trigger a build job to recompile NanoGem and restart the orchestrator.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        imageTag: { type: 'STRING' as const, description: 'Optional custom image tag' },
+        resumptionPrompt: { type: 'STRING' as const, description: 'Command after restart' },
+      },
+    },
+  },
+  {
+    name: 'build_project',
+    description: 'Build an image for a specific project folder.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        imageTag: { type: 'STRING' as const, description: 'Destination tag' },
+        folder: { type: 'STRING' as const, description: 'Source project folder' },
+        dockerfilePath: { type: 'STRING' as const, description: 'Optional Dockerfile path' },
+      },
+      required: ['imageTag', 'folder'],
+    },
+  },
+  {
+    name: 'register_group',
+    description: 'Register a new specialized agent group workspace.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        jid: { type: 'STRING' as const },
+        name: { type: 'STRING' as const },
+        folder: { type: 'STRING' as const },
+        trigger: { type: 'STRING' as const },
+        requiresTrigger: { type: 'BOOLEAN' as const },
+        systemInstruction: { type: 'STRING' as const },
+        ephemeral: { type: 'BOOLEAN' as const },
+      },
+      required: ['name', 'folder', 'trigger', 'systemInstruction'],
+    },
+  },
+  {
+    name: 'delete_group',
+    description: 'Delete an existing agent group workspace.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        jid: { type: 'STRING' as const, description: 'JID to delete' },
+      },
+      required: ['jid'],
+    },
+  },
+  {
+    name: 'list_groups',
+    description: 'List all registered and available agent groups.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {},
+    },
+  },
 ];
 
 export const getFunctions = (
@@ -275,20 +364,22 @@ export const getFunctions = (
     });
     return `Message sent to ${finalTargetJid}.`;
   },
-  build_project: ({ imageTag, folder, dockerfilePath }: any) => {
-    // If folder is provided, it's relative to the 'groups' directory.
-    // If not provided, it defaults to the current group folder.
-    const targetFolder = folder || input.groupFolder;
-
-    writeIpcFile(TASKS_DIR, {
-      type: 'build_project',
-      imageTag,
-      dockerfilePath: dockerfilePath || 'Dockerfile',
-      contextPath: `groups/${targetFolder}`,
-      shouldRollout: false,
+  delegate_task: ({ targetJid, task, expectedOutput }: any) => {
+    const missionText = `[MISSION_ASSIGNED]\nTask: ${task}\nExpected Output: ${expectedOutput}`;
+    writeIpcFile(IPC_MESSAGES_DIR, {
+      type: 'message',
+      chatJid: targetJid,
+      text: missionText,
+      sender: input.assistantName || 'Manager',
+      groupFolder: input.groupFolder,
       timestamp: new Date().toISOString(),
     });
-    return `Build requested for project in groups/${targetFolder}. Image will be pushed to ${imageTag}.`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'write_mission',
+      targetJid,
+      mission: { task, expectedOutput, assignedBy: input.chatJid, assignedByFolder: input.groupFolder, timestamp: new Date().toISOString() }
+    });
+    return `Task delegated to ${targetJid}.`;
   },
   submit_work: ({ result }: any) => {
     const missionPath = path.join('/workspace/group', '.nanogem', 'mission.json');
@@ -311,4 +402,34 @@ export const getFunctions = (
   },
   recall_memory: ({ category }: any) => recallMemory(category),
   update_memory: ({ category, content }: any) => updateMemory(category, content),
+  schedule_task: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'schedule_task', ...args, createdBy: input.groupFolder, timestamp: new Date().toISOString() });
+    return 'Task scheduled.';
+  },
+  create_discord_thread: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'create_discord_thread', ...args, chatJid: input.chatJid, timestamp: new Date().toISOString() });
+    return 'Thread creation requested.';
+  },
+  rebuild_self: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'rebuild_self', ...args, timestamp: new Date().toISOString() });
+    return 'Rebuild requested.';
+  },
+  build_project: ({ imageTag, folder, dockerfilePath }: any) => {
+    const targetFolder = folder || input.groupFolder;
+    writeIpcFile(TASKS_DIR, { type: 'build_project', imageTag, dockerfilePath: dockerfilePath || 'Dockerfile', contextPath: `groups/${targetFolder}`, shouldRollout: false, timestamp: new Date().toISOString() });
+    return `Build requested for groups/${targetFolder}.`;
+  },
+  register_group: (args: any) => {
+    const jid = args.jid || `internal-${args.folder}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, { type: 'register_group', ...args, jid, sourceGroup: input.groupFolder, timestamp: new Date().toISOString() });
+    return `Group "${args.name}" registration requested.`;
+  },
+  delete_group: ({ jid }: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'delete_group', jid, sourceGroup: input.groupFolder, timestamp: new Date().toISOString() });
+    return `Deletion requested for ${jid}.`;
+  },
+  list_groups: () => {
+    const groupsFile = '/workspace/ipc/available_groups.json';
+    return fs.existsSync(groupsFile) ? fs.readFileSync(groupsFile, 'utf-8') : 'Group list not available.';
+  },
 });
