@@ -230,6 +230,42 @@ const toolDeclarations = [
     },
   },
   {
+    name: 'delegate_task',
+    description: 'Assign a structured task to another agent. This creates a formal "Mission" for the target agent and expects a report back via submit_work.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        targetJid: {
+          type: 'STRING' as const,
+          description: 'The JID of the agent to delegate to (e.g. "internal-researcher").',
+        },
+        task: {
+          type: 'STRING' as const,
+          description: 'Detailed description of the task to be performed.',
+        },
+        expectedOutput: {
+          type: 'STRING' as const,
+          description: 'Clear definition of what the final result should look like.',
+        },
+      },
+      required: ['targetJid', 'task', 'expectedOutput'],
+    },
+  },
+  {
+    name: 'submit_work',
+    description: 'Submit the final result of your assigned Mission. Use this only when you have completed your goal and match the expectedOutput requirements.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        result: {
+          type: 'STRING' as const,
+          description: 'The final outcome or report of your work.',
+        },
+      },
+      required: ['result'],
+    },
+  },
+  {
     name: 'schedule_task',
     description: 'Schedule a recurring or one-time AI task.',
     parameters: {
@@ -570,6 +606,69 @@ const getFunctions = (
     });
     return `Message sent to ${finalTargetJid}.`;
   },
+  delegate_task: ({ targetJid, task, expectedOutput }) => {
+    // 1. Send an informational message to the target agent
+    const missionText = `[MISSION_ASSIGNED]\nTask: ${task}\nExpected Output: ${expectedOutput}\nAssigned by: ${input.chatJid}`;
+    
+    writeIpcFile(IPC_MESSAGES_DIR, {
+      type: 'message',
+      chatJid: targetJid,
+      text: missionText,
+      sender: input.assistantName || 'Manager',
+      groupFolder: input.groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    // 2. We don't have direct access to the target's folder from inside the pod,
+    // so we use the IPC system to tell the Orchestrator to write the MISSION.json
+    writeIpcFile(TASKS_DIR, {
+      type: 'write_mission',
+      targetJid,
+      mission: {
+        task,
+        expectedOutput,
+        assignedBy: input.chatJid,
+        assignedByFolder: input.groupFolder,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    return `Task successfully delegated to ${targetJid}. They have been notified and assigned this mission.`;
+  },
+  submit_work: ({ result }) => {
+    // Read the current mission to know who to report back to
+    const missionPath = path.join('/workspace/group', '.nanoclaw', 'mission.json');
+    let reportJid = input.chatJid; // Fallback to current chat
+    
+    if (fs.existsSync(missionPath)) {
+      try {
+        const mission = JSON.parse(fs.readFileSync(missionPath, 'utf-8'));
+        if (mission.assignedBy) reportJid = mission.assignedBy;
+      } catch (e) {
+        log('Failed to read mission file for submission');
+      }
+    }
+
+    const reportText = `[MISSION_COMPLETED]\nResult: ${result}`;
+    
+    writeIpcFile(IPC_MESSAGES_DIR, {
+      type: 'message',
+      chatJid: reportJid,
+      text: reportText,
+      sender: input.assistantName || 'Worker',
+      groupFolder: input.groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Cleanup: Remove the mission file now that it's completed
+    if (fs.existsSync(missionPath)) {
+      try {
+        fs.unlinkSync(missionPath);
+      } catch (e) {}
+    }
+
+    return `Work submitted to ${reportJid}. You may now wait for further instructions or exit.`;
+  },
   schedule_task: ({
     prompt,
     schedule_type,
@@ -873,6 +972,19 @@ class McpManager {
   }
 }
 
+function formatRolePrompt(instruction: string): string {
+  if (!instruction.includes('# Role') && !instruction.includes('# Goal')) {
+    return instruction;
+  }
+
+  // If structured headers exist, we reinforce them for the LLM
+  return `You are an autonomous agent with a specific role and goal.
+  
+${instruction}
+
+Always maintain your defined persona and prioritize your specified goal.`;
+}
+
 async function main(): Promise<void> {
   let input: ContainerInput;
   try {
@@ -900,6 +1012,8 @@ async function main(): Promise<void> {
 
   const functions = getFunctions(input, client, modelName);
   const historyPath = path.join('/workspace/group', '.nanoclaw', 'history.json');
+  const missionPath = path.join('/workspace/group', '.nanoclaw', 'mission.json');
+
   let history: any[] = [];
   if (fs.existsSync(historyPath)) {
     try {
@@ -916,9 +1030,27 @@ async function main(): Promise<void> {
   let systemPrompt = `You are ${input.assistantName || 'Andy'}, an autonomous AI agent running in a Kubernetes pod.`;
 
   if (fs.existsSync(groupMdPath)) {
-    systemPrompt = fs.readFileSync(groupMdPath, 'utf-8');
+    systemPrompt = formatRolePrompt(fs.readFileSync(groupMdPath, 'utf-8'));
   } else if (fs.existsSync(globalMdPath)) {
     systemPrompt += `\n\nGlobal Context:\n${fs.readFileSync(globalMdPath, 'utf-8')}`;
+  }
+
+  // MISSION INJECTION: If a mission is assigned, it becomes the top priority
+  if (fs.existsSync(missionPath)) {
+    try {
+      const mission = JSON.parse(fs.readFileSync(missionPath, 'utf-8'));
+      systemPrompt = `### CURRENT MISSION (PRIORITY 1)
+You have been assigned a formal mission by ${mission.assignedBy}.
+TASK: ${mission.task}
+EXPECTED OUTPUT: ${mission.expectedOutput}
+
+When you have completed the task according to the expected output, you MUST call the 'submit_work' tool to report your results.
+
+---
+${systemPrompt}`;
+    } catch (e) {
+      log('Failed to parse mission file');
+    }
   }
 
   const allTools = [

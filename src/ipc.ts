@@ -6,6 +6,7 @@ import { CronExpressionParser } from 'cron-parser';
 import {
   CONTAINER_IMAGE_BASE,
   DATA_DIR,
+  GROUPS_DIR,
   IPC_POLL_INTERVAL,
   K8S_PVC_NAME,
   K8S_PVC_SUBPATH,
@@ -218,6 +219,8 @@ export async function processTaskIpc(
     resumptionPrompt?: string;
     // For Discord
     parentJid?: string;
+    // For Missions
+    mission?: any;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -226,6 +229,26 @@ export async function processTaskIpc(
   const registeredGroups = deps.registeredGroups();
 
   switch (data.type) {
+    case 'write_mission':
+      if (data.targetJid && data.mission) {
+        const targetGroup = registeredGroups[data.targetJid];
+        if (!targetGroup) {
+          logger.warn({ targetJid: data.targetJid }, 'Cannot write mission: target not registered');
+          break;
+        }
+
+        const targetFolder = targetGroup.folder;
+        // Authorization: non-main groups can only write to their own children or self
+        // (For now we allow any registered group to write to any other if they know the JID, 
+        // as the tool itself is only available to agents)
+        
+        const missionDir = path.join(GROUPS_DIR, targetFolder, '.nanoclaw');
+        fs.mkdirSync(missionDir, { recursive: true });
+        fs.writeFileSync(path.join(missionDir, 'mission.json'), JSON.stringify(data.mission, null, 2));
+        logger.info({ from: sourceGroup, to: targetFolder }, 'Mission written to disk');
+      }
+      break;
+
     case 'schedule_task':
       if (
         data.prompt &&
