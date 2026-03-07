@@ -446,14 +446,22 @@ async function runAgentPod(
     const podCompletionPromise = (async () => {
       const startTime = Date.now();
       const MAX_POD_LIFE = 1800000;
+      let _resolvePod: () => void = () => {};
 
-      // Real-time Watcher: Listen for pod lifecycle events directly from K8s API
+      // Real-time Watcher: Listen for the 'exit' sentinel in the IPC folder
+      const fsWatcher = fs.watch(groupIpcDir, (eventType, filename) => {
+        if (filename && filename.startsWith('exit-') && filename.endsWith('.json')) {
+          logger.info({ podName, filename }, 'Agent brain exit sentinel detected');
+          fsWatcher.close();
+          _resolvePod();
+        }
+      });
+
+      // Backup: Still check pod lifecycle events directly from K8s API
       const watch = new k8s.Watch(kc);
       let watchRequest: any;
-      let _resolvePod: () => void;
 
       const watchPromise = new Promise<void>((resolve) => {
-        _resolvePod = resolve;
         watch.watch(
           `/api/v1/namespaces/${K8S_NAMESPACE}/pods`,
           { fieldSelector: `metadata.name=${podName}` },
@@ -462,6 +470,7 @@ async function runAgentPod(
             if (status === 'Succeeded' || status === 'Failed') {
               logger.debug({ podName, status }, 'Pod watch detected completion');
               if (watchRequest) watchRequest.abort();
+              fsWatcher.close();
               _resolvePod();
             }
           },
@@ -472,30 +481,37 @@ async function runAgentPod(
         ).then(req => { watchRequest = req; });
       });
 
-      // Backup: Still check for results in IPC directory periodically
+      // Periodic backup poller for results and max life
       const backupInterval = setInterval(() => {
         if (fs.existsSync(groupIpcDir)) {
-          const files = fs.readdirSync(groupIpcDir)
-            .filter(f => f.startsWith('result-') && f.endsWith('.json'))
-            .sort();
+          const files = fs.readdirSync(groupIpcDir);
           
-          for (const file of files) {
+          // Check for missed results
+          const resultFiles = files.filter(f => f.startsWith('result-') && f.endsWith('.json')).sort();
+          for (const file of resultFiles) {
             const resultPath = path.join(groupIpcDir, file);
             try {
               const content = fs.readFileSync(resultPath, 'utf-8');
               const parsed = JSON.parse(content);
               fs.unlinkSync(resultPath);
               logger.info({ podName, file }, 'Result received via fallback poller');
-              
               outputChain = outputChain.then(() => safeOnOutput(parsed));
               resolveFirstOutput(parsed);
             } catch (err) {}
+          }
+
+          // Check for missed exit sentinels
+          if (files.some(f => f.startsWith('exit-'))) {
+            logger.info({ podName }, 'Exit sentinel found by poller');
+            fsWatcher.close();
+            _resolvePod();
           }
         }
 
         if (Date.now() - startTime > MAX_POD_LIFE) {
           logger.warn({ podName }, 'Pod reached max life, killing');
           if (watchRequest) watchRequest.abort();
+          fsWatcher.close();
           k8sRuntime.stopPod(podName);
           _resolvePod();
         }
@@ -503,6 +519,7 @@ async function runAgentPod(
 
       await watchPromise;
       clearInterval(backupInterval);
+      fsWatcher.close();
 
       if (!firstOutputResolved) {
         try {

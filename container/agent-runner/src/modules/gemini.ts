@@ -131,7 +131,13 @@ export class GeminiManager {
         }
       }
 
-      if (Date.now() - lastActivity > IDLE_EXIT_TIMEOUT_MS) return null;
+      if (Date.now() - lastActivity > IDLE_EXIT_TIMEOUT_MS) {
+        try {
+          const sentinelPath = path.join(IPC_DIR, `exit-${Date.now()}.json`);
+          fs.writeFileSync(sentinelPath, JSON.stringify({ type: 'exit', reason: 'idle_timeout' }));
+        } catch (e) {}
+        return null;
+      }
       await new Promise(r => setTimeout(r, IPC_POLL_MS));
     }
   }
