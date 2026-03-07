@@ -275,22 +275,20 @@ export const getFunctions = (
     });
     return `Message sent to ${finalTargetJid}.`;
   },
-  delegate_task: ({ targetJid, task, expectedOutput }: any) => {
-    const missionText = `[MISSION_ASSIGNED]\nTask: ${task}\nExpected Output: ${expectedOutput}`;
-    writeIpcFile(IPC_MESSAGES_DIR, {
-      type: 'message',
-      chatJid: targetJid,
-      text: missionText,
-      sender: input.assistantName || 'Manager',
-      groupFolder: input.groupFolder,
+  build_project: ({ imageTag, folder, dockerfilePath }: any) => {
+    // If folder is provided, it's relative to the 'groups' directory.
+    // If not provided, it defaults to the current group folder.
+    const targetFolder = folder || input.groupFolder;
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'build_project',
+      imageTag,
+      dockerfilePath: dockerfilePath || 'Dockerfile',
+      contextPath: `groups/${targetFolder}`,
+      shouldRollout: false,
       timestamp: new Date().toISOString(),
     });
-    writeIpcFile(TASKS_DIR, {
-      type: 'write_mission',
-      targetJid,
-      mission: { task, expectedOutput, assignedBy: input.chatJid, assignedByFolder: input.groupFolder, timestamp: new Date().toISOString() }
-    });
-    return `Task delegated to ${targetJid}.`;
+    return `Build requested for project in groups/${targetFolder}. Image will be pushed to ${imageTag}.`;
   },
   submit_work: ({ result }: any) => {
     const missionPath = path.join('/workspace/group', '.nanogem', 'mission.json');
