@@ -185,6 +185,39 @@ export const toolDeclarations = [
     },
   },
   {
+    name: 'pause_task',
+    description: 'Pause a scheduled task.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        id: { type: 'STRING' as const, description: 'The task ID to pause' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'resume_task',
+    description: 'Resume a paused scheduled task.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        id: { type: 'STRING' as const, description: 'The task ID to resume' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'cancel_task',
+    description: 'Cancel and delete a scheduled task.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        id: { type: 'STRING' as const, description: 'The task ID to cancel' },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'create_discord_thread',
     description: 'Create a new Discord thread and bind an autonomous sub-agent to it.',
     parameters: {
@@ -265,6 +298,14 @@ export const toolDeclarations = [
   {
     name: 'list_groups',
     description: 'List all registered and available agent groups.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'refresh_groups',
+    description: 'Sync available groups and write metadata snapshot.',
     parameters: {
       type: 'OBJECT' as const,
       properties: {},
@@ -423,6 +464,18 @@ export const getFunctions = (
     writeIpcFile(TASKS_DIR, { type: 'schedule_task', ...args, createdBy: input.groupFolder, timestamp: new Date().toISOString() });
     return 'Task scheduled.';
   },
+  pause_task: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'pause_task', ...args, timestamp: new Date().toISOString() });
+    return 'Task pause requested.';
+  },
+  resume_task: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'resume_task', ...args, timestamp: new Date().toISOString() });
+    return 'Task resume requested.';
+  },
+  cancel_task: (args: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'cancel_task', ...args, timestamp: new Date().toISOString() });
+    return 'Task cancellation requested.';
+  },
   create_discord_thread: (args: any) => {
     writeIpcFile(TASKS_DIR, { type: 'create_discord_thread', ...args, chatJid: input.chatJid, timestamp: new Date().toISOString() });
     return 'Thread creation requested.';
@@ -452,5 +505,9 @@ export const getFunctions = (
   list_groups: () => {
     const groupsFile = '/workspace/ipc/available_groups.json';
     return fs.existsSync(groupsFile) ? fs.readFileSync(groupsFile, 'utf-8') : 'Group list not available.';
+  },
+  refresh_groups: () => {
+    writeIpcFile(TASKS_DIR, { type: 'refresh_groups', timestamp: new Date().toISOString() });
+    return 'Group refresh requested.';
   },
 });
