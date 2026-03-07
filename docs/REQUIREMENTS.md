@@ -100,6 +100,22 @@ A personal Gemini assistant swarm accessible via Discord, featuring hierarchical
 - **Filesystem-based Exit**: The orchestrator uses `fs.watch` on the IPC folder to detect an agent's `exit` sentinel instantly, resetting the queue without waiting for slow K8s API updates.
 - **Max Pod Life**: 30-minute hard limit to prevent infinite loops.
 
+### Scheduled Tasks
+- Users can ask Gemini to schedule recurring or one-time tasks from any group.
+- Tasks run as full agents in the context of the group that created them.
+- Tasks have access to all tools including Bash (safe in pod).
+- Tasks can optionally send messages to their group via `send_message` tool, or complete silently.
+- Task runs are logged to the database with duration and result.
+- Schedule types: cron expressions, intervals (ms), or one-time (ISO timestamp).
+- From main: can schedule tasks for any group, view/manage all tasks.
+- From other groups: can only manage that group's tasks.
+
+### Group Management
+- New groups are added explicitly via the main channel.
+- Groups are registered in SQLite (via the main channel or IPC `register_group` command).
+- Each group gets a dedicated folder under `groups/`.
+- Groups can have additional directories mounted via `containerConfig`.
+
 ### Main Channel Privileges
 - The Main channel acts as the Head Manager.
 - Can write to global memory and project source code.
