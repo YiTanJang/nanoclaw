@@ -252,6 +252,17 @@ export const toolDeclarations = [
     },
   },
   {
+    name: 'delete_discord_thread',
+    description: 'Deletes an autonomous sub-agent and its associated Discord thread.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        jid: { type: 'STRING' as const, description: 'The JID of the thread to delete' },
+      },
+      required: ['jid'],
+    },
+  },
+  {
     name: 'list_groups',
     description: 'List all registered and available agent groups.',
     parameters: {
@@ -433,6 +444,10 @@ export const getFunctions = (
   delete_group: ({ jid }: any) => {
     writeIpcFile(TASKS_DIR, { type: 'delete_group', jid, sourceGroup: input.groupFolder, timestamp: new Date().toISOString() });
     return `Deletion requested for ${jid}.`;
+  },
+  delete_discord_thread: ({ jid }: any) => {
+    writeIpcFile(TASKS_DIR, { type: 'delete_discord_thread', jid, sourceGroup: input.groupFolder, timestamp: new Date().toISOString() });
+    return `Discord thread deletion requested for ${jid}.`;
   },
   list_groups: () => {
     const groupsFile = '/workspace/ipc/available_groups.json';
