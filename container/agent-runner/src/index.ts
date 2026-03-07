@@ -433,6 +433,21 @@ const toolDeclarations = [
     },
   },
   {
+    name: 'recall_memory',
+    description: 'Recall information from your long-term memory categories (facts, workflows, or episodes). Use this when you need specific historical context that is not in your current working memory.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        category: {
+          type: 'STRING' as const,
+          enum: ['facts', 'workflows', 'episodes'],
+          description: 'The category of memory to recall.',
+        },
+      },
+      required: ['category'],
+    },
+  },
+  {
     name: 'update_memory',
     description: 'Update your long-term memory (Continuum). Use this to record permanent facts, project discoveries, or successful workflows that should persist across sessions.',
     parameters: {
@@ -813,6 +828,31 @@ const getFunctions = (
     }
     return 'Group list not available.';
   },
+  recall_memory: ({ category }) => {
+    try {
+      if (category === 'facts' || category === 'workflows') {
+        const filePath = path.join(CONTINUUM_DIR, `${category}.md`);
+        return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : `No ${category} found.`;
+      }
+      if (category === 'episodes') {
+        if (!fs.existsSync(EPISODES_DIR)) return 'No episodes found.';
+        const episodes = fs.readdirSync(EPISODES_DIR)
+          .filter(f => f.endsWith('.md'))
+          .sort()
+          .reverse()
+          .slice(0, 10); // Recall more episodes than the default prompt
+        
+        let context = '### RECENT EPISODES\n';
+        for (const ep of episodes) {
+          context += `\n#### ${ep}\n${fs.readFileSync(path.join(EPISODES_DIR, ep), 'utf-8')}`;
+        }
+        return context;
+      }
+      return 'Invalid category.';
+    } catch (err: any) {
+      return `Error recalling memory: ${err.message}`;
+    }
+  },
   update_memory: ({ category, content }) => {
     try {
       fs.mkdirSync(CONTINUUM_DIR, { recursive: true });
@@ -1085,33 +1125,37 @@ async function main(): Promise<void> {
     systemPrompt += `\n\nGlobal Context:\n${fs.readFileSync(globalMdPath, 'utf-8')}`;
   }
 
-  // --- 2026 SOTA COGNITIVE MEMORY INJECTION ---
+  // --- 2026 SOTA COGNITIVE MEMORY INJECTION (LAZY LOADING) ---
   let cognitiveMemory = '';
   
-  // 1. Load Continuum (Semantic & Procedural Memory)
+  // 1. Load Continuum Snippets (Semantic & Procedural Memory)
   const factsPath = path.join(CONTINUUM_DIR, 'facts.md');
   const workflowsPath = path.join(CONTINUUM_DIR, 'workflows.md');
   
   if (fs.existsSync(factsPath)) {
-    cognitiveMemory += `\n\n### ESTABLISHED FACTS (Semantic Memory)\n${fs.readFileSync(factsPath, 'utf-8')}`;
+    const facts = fs.readFileSync(factsPath, 'utf-8');
+    // Load only first 2KB of facts as a teaser, tell agent to use recall_memory for more
+    cognitiveMemory += `\n\n### ESTABLISHED FACTS (Semantic Memory - Snippet)\n${facts.slice(0, 2048)}${facts.length > 2048 ? '\n... (use recall_memory tool to see all facts)' : ''}`;
   }
   if (fs.existsSync(workflowsPath)) {
-    cognitiveMemory += `\n\n### VERIFIED WORKFLOWS (Procedural Memory)\n${fs.readFileSync(workflowsPath, 'utf-8')}`;
+    const workflows = fs.readFileSync(workflowsPath, 'utf-8');
+    cognitiveMemory += `\n\n### VERIFIED WORKFLOWS (Procedural Memory - Snippet)\n${workflows.slice(0, 2048)}${workflows.length > 2048 ? '\n... (use recall_memory tool to see all workflows)' : ''}`;
   }
 
-  // 2. Load Episodes (Recent Episodic Memory)
+  // 2. Load Episodes (Last 2 only by default for speed)
   if (fs.existsSync(EPISODES_DIR)) {
     const episodes = fs.readdirSync(EPISODES_DIR)
       .filter(f => f.endsWith('.md'))
       .sort()
       .reverse()
-      .slice(0, 5); // Load only last 5 episodes to save context
+      .slice(0, 2); // Reduced from 5 to 2 for base prompt
     
     if (episodes.length > 0) {
       cognitiveMemory += `\n\n### RECENT EPISODES (Episodic Memory)`;
       for (const ep of episodes) {
         cognitiveMemory += `\n\n#### ${ep}\n${fs.readFileSync(path.join(EPISODES_DIR, ep), 'utf-8')}`;
       }
+      cognitiveMemory += `\n\n(Use recall_memory('episodes') to see up to 10 past mission reports)`;
     }
   }
 

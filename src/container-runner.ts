@@ -293,12 +293,24 @@ async function runAgentPod(
               value: Buffer.from(JSON.stringify(input)).toString('base64'),
             },
             {
+              name: 'NANOGEM_CHAT_JID',
+              value: input.chatJid,
+            },
+            {
+              name: 'NANOGEM_GROUP_FOLDER',
+              value: input.groupFolder,
+            },
+            {
+              name: 'NANOGEM_IS_MAIN',
+              value: input.isMain ? '1' : '0',
+            },
+            {
               name: 'GEMINI_MODEL',
               value: input.model || GEMINI_MODEL,
             },
-          ],
-          command: ['/bin/sh', '-c'],
-          args: ['echo "$NANOGEM_INPUT" | /app/entrypoint.sh'],
+            ],
+            command: ['/bin/sh', '-c'],
+            args: ['echo "$NANOGEM_INPUT" | /app/entrypoint.sh'],
           volumeMounts: [
             ...mounts.map((m) => ({
               name: 'agent-storage',
