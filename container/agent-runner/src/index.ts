@@ -49,6 +49,10 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 1000;
 
+const MEMORY_DIR = '/workspace/group/.nanoclaw/memory';
+const CONTINUUM_DIR = path.join(MEMORY_DIR, 'continuum');
+const EPISODES_DIR = path.join(MEMORY_DIR, 'episodes');
+
 function writeOutput(output: ContainerOutput): void {
   const json = JSON.stringify(output);
   console.log(OUTPUT_START_MARKER);
@@ -429,6 +433,25 @@ const toolDeclarations = [
     },
   },
   {
+    name: 'update_memory',
+    description: 'Update your long-term memory (Continuum). Use this to record permanent facts, project discoveries, or successful workflows that should persist across sessions.',
+    parameters: {
+      type: 'OBJECT' as const,
+      properties: {
+        category: {
+          type: 'STRING' as const,
+          enum: ['facts', 'workflows'],
+          description: 'The type of memory to update.',
+        },
+        content: {
+          type: 'STRING' as const,
+          description: 'The updated Markdown content for this category. This REPLACES the existing content for that category, so read the current memory first if you want to append.',
+        },
+      },
+      required: ['category', 'content'],
+    },
+  },
+  {
     name: 'list_groups',
     description: 'List all registered and available agent groups.',
     parameters: {
@@ -660,6 +683,20 @@ const getFunctions = (
       timestamp: new Date().toISOString(),
     });
 
+    // --- 2026 SOTA: AUTOMATIC EPISODIC MEMORY RECORDING ---
+    try {
+      fs.mkdirSync(EPISODES_DIR, { recursive: true });
+      const episodeFile = `episode-${Date.now()}.md`;
+      const episodeContent = `## Mission Report: ${new Date().toISOString()}
+**Task**: ${input.prompt.slice(0, 500)}...
+**Result**: ${result}
+**Status**: COMPLETED`;
+      
+      fs.writeFileSync(path.join(EPISODES_DIR, episodeFile), episodeContent);
+    } catch (e) {
+      log('Failed to record episodic memory');
+    }
+
     // Cleanup: Remove the mission file now that it's completed
     if (fs.existsSync(missionPath)) {
       try {
@@ -775,6 +812,16 @@ const getFunctions = (
       return fs.readFileSync(groupsFile, 'utf-8');
     }
     return 'Group list not available.';
+  },
+  update_memory: ({ category, content }) => {
+    try {
+      fs.mkdirSync(CONTINUUM_DIR, { recursive: true });
+      const filePath = path.join(CONTINUUM_DIR, `${category}.md`);
+      fs.writeFileSync(filePath, content);
+      return `Memory category '${category}' updated successfully.`;
+    } catch (err: any) {
+      return `Error updating memory: ${err.message}`;
+    }
   },
   wait_for_report: async ({ folder, timeoutMs = 60000 }) => {
     const reportPath = path.join('/workspace/project/groups', folder, 'REPORT.md');
@@ -1033,6 +1080,40 @@ async function main(): Promise<void> {
     systemPrompt = formatRolePrompt(fs.readFileSync(groupMdPath, 'utf-8'));
   } else if (fs.existsSync(globalMdPath)) {
     systemPrompt += `\n\nGlobal Context:\n${fs.readFileSync(globalMdPath, 'utf-8')}`;
+  }
+
+  // --- 2026 SOTA COGNITIVE MEMORY INJECTION ---
+  let cognitiveMemory = '';
+  
+  // 1. Load Continuum (Semantic & Procedural Memory)
+  const factsPath = path.join(CONTINUUM_DIR, 'facts.md');
+  const workflowsPath = path.join(CONTINUUM_DIR, 'workflows.md');
+  
+  if (fs.existsSync(factsPath)) {
+    cognitiveMemory += `\n\n### ESTABLISHED FACTS (Semantic Memory)\n${fs.readFileSync(factsPath, 'utf-8')}`;
+  }
+  if (fs.existsSync(workflowsPath)) {
+    cognitiveMemory += `\n\n### VERIFIED WORKFLOWS (Procedural Memory)\n${fs.readFileSync(workflowsPath, 'utf-8')}`;
+  }
+
+  // 2. Load Episodes (Recent Episodic Memory)
+  if (fs.existsSync(EPISODES_DIR)) {
+    const episodes = fs.readdirSync(EPISODES_DIR)
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .slice(0, 5); // Load only last 5 episodes to save context
+    
+    if (episodes.length > 0) {
+      cognitiveMemory += `\n\n### RECENT EPISODES (Episodic Memory)`;
+      for (const ep of episodes) {
+        cognitiveMemory += `\n\n#### ${ep}\n${fs.readFileSync(path.join(EPISODES_DIR, ep), 'utf-8')}`;
+      }
+    }
+  }
+
+  if (cognitiveMemory) {
+    systemPrompt += `\n\n--- LONG-TERM MEMORY ---\n${cognitiveMemory}\n--- END MEMORY ---`;
   }
 
   // MISSION INJECTION: If a mission is assigned, it becomes the top priority

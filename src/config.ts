@@ -31,6 +31,11 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
+// --- Cognitive Memory Constants ---
+export const MEMORY_DIR_NAME = '.nanoclaw/memory';
+export const CONTINUUM_DIR_NAME = 'continuum';
+export const EPISODES_DIR_NAME = 'episodes';
+
 // --- Registry & Image Configuration ---
 export const REGISTRY_URL = process.env.REGISTRY_URL || 'localhost:5000';
 export const CONTAINER_IMAGE_BASE = process.env.CONTAINER_IMAGE_BASE || 'nanoclaw';
