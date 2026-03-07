@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: nanogem-pv-final
+  name: nanogem-pv
 spec:
   capacity:
-    storage: 1800Gi
+    storage: 10Gi # Adjust to your needs
   volumeMode: Filesystem
   accessModes:
     - ReadWriteMany
@@ -15,13 +15,13 @@ spec:
     - tcp
     - nolock
   nfs:
-    path: /path/to/your/project/on/nfs
-    server: <NFS_SERVER_IP>
+    path: /export/path/to/nanogem # The absolute path on your NFS server
+    server: 192.168.1.100 # Your NFS server IP
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanogem-pvc-final
+  name: nanogem-pvc
   namespace: nanogem
 spec:
   storageClassName: ""
@@ -29,5 +29,5 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: 1800Gi
-  volumeName: nanogem-pv-final
+      storage: 10Gi # Must match the PV capacity
+  volumeName: nanogem-pv
