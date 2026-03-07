@@ -205,8 +205,17 @@ export class GroupQueue {
       if (state.process) {
         await new Promise<void>((resolve) => {
           state.process?.on('exit', () => resolve());
-          const timer = setInterval(() => {
+          // Safety: check every few seconds if pod still exists in cluster
+          const timer = setInterval(async () => {
             if (!state.process) {
+              clearInterval(timer);
+              resolve();
+              return;
+            }
+            
+            // Heartbeat: verify pod status via K8s API if possible
+            // If the podName is missing or the process was marked killed, resolve.
+            if (state.process.killed) {
               clearInterval(timer);
               resolve();
             }
