@@ -41,6 +41,7 @@ export interface RegisteredGroup {
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   agentIdentity?: string; // Core permanent persona for the agent
   ephemeral?: boolean; // If true, the folder is deleted on unregistration
+  allowSourceAccess?: boolean; // If true, agent can read-write the orchestrator source code
 }
 
 export interface NewMessage {

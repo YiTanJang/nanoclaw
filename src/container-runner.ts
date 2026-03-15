@@ -80,8 +80,8 @@ function buildVolumeMounts(
     readonly: true,
   });
 
-  if (isMain) {
-    // Selective Self-Improvement (READ-WRITE)
+  if (isMain || group.allowSourceAccess) {
+    // Trusted groups (Main or explicit Developers) get READ-WRITE access to source
     mounts.push({
       hostPath: path.join(projectRoot, 'src'),
       containerPath: '/workspace/project/src',
@@ -93,29 +93,38 @@ function buildVolumeMounts(
       readonly: false,
     });
 
-    // Main group folder (READ-WRITE)
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
+    if (isMain) {
+      // Main group folder (READ-WRITE)
+      mounts.push({
+        hostPath: groupDir,
+        containerPath: '/workspace/group',
+        readonly: false,
+      });
+    } else {
+      // Specialist folder (READ-WRITE)
+      mounts.push({
+        hostPath: groupDir,
+        containerPath: '/workspace/group',
+        readonly: false,
+      });
+    }
   } else {
-    // Other groups only get their own folder (READ-WRITE)
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-
-    // Mount source code read-write for auto-evolution
+    // Standard specialists get READ-ONLY access to source documentation/code
     mounts.push({
       hostPath: path.join(projectRoot, 'src'),
       containerPath: '/workspace/project/src',
-      readonly: false,
+      readonly: true,
     });
     mounts.push({
       hostPath: path.join(projectRoot, 'container/agent-runner/src'),
       containerPath: '/workspace/project/container/agent-runner/src',
+      readonly: true,
+    });
+
+    // Standard specialist folder (READ-WRITE)
+    mounts.push({
+      hostPath: groupDir,
+      containerPath: '/workspace/group',
       readonly: false,
     });
 
@@ -439,23 +448,47 @@ async function runAgentPod(
       const startTime = Date.now();
       const MAX_POD_LIFE = 1800000;
 
-      // Real-time Watcher: Listen for the 'exit' sentinel in the IPC folder
-      const fsWatcher = fs.watch(groupIpcDir, (eventType, filename) => {
-        if (filename && filename.startsWith('exit-') && filename.endsWith('.json')) {
-          logger.info({ podName, filename }, 'Agent brain exit sentinel detected');
-          try {
-            fs.unlinkSync(path.join(groupIpcDir, filename));
-          } catch (e) {}
-          fsWatcher.close();
-          _resolvePod();
-        }
-      });
+      let resolved = false;
+      let watchRequest: any = null;
+      let backupInterval: NodeJS.Timeout | null = null;
+      let fsWatcher: fs.FSWatcher | null = null;
 
-      // Backup: Still check pod lifecycle events directly from K8s API
-      const watch = new k8s.Watch(kc);
-      let watchRequest: any;
+      const cleanupWatchers = () => {
+        if (resolved) return;
+        resolved = true;
+        if (watchRequest) {
+          try { watchRequest.abort(); } catch (e) {}
+        }
+        if (backupInterval) {
+          clearInterval(backupInterval);
+        }
+        if (fsWatcher) {
+          try { fsWatcher.close(); } catch (e) {}
+        }
+      };
 
       const watchPromise = new Promise<void>((resolve) => {
+        const triggerResolve = () => {
+          cleanupWatchers();
+          resolve();
+          _resolvePod(); // Ensure external resolvers also know
+        };
+
+        // Real-time Watcher: Listen for the 'exit' sentinel
+        try {
+          fsWatcher = fs.watch(groupIpcDir, (eventType, filename) => {
+            if (filename && filename.startsWith('exit-') && filename.endsWith('.json')) {
+              logger.info({ podName, filename }, 'Agent brain exit sentinel detected');
+              try { fs.unlinkSync(path.join(groupIpcDir, filename)); } catch (e) {}
+              triggerResolve();
+            }
+          });
+        } catch (e) {
+          logger.warn({ err: e, groupIpcDir }, 'Failed to start FS watcher');
+        }
+
+        // K8s Watcher
+        const watch = new k8s.Watch(kc);
         watch.watch(
           `/api/v1/namespaces/${K8S_NAMESPACE}/pods`,
           { fieldSelector: `metadata.name=${podName}` },
@@ -463,60 +496,50 @@ async function runAgentPod(
             const status = obj.status?.phase;
             if (status === 'Succeeded' || status === 'Failed') {
               logger.debug({ podName, status }, 'Pod watch detected completion');
-              if (watchRequest) watchRequest.abort();
-              fsWatcher.close();
-              _resolvePod();
+              triggerResolve();
             }
           },
           (err) => {
             if (err) logger.debug({ err, podName }, 'Pod watch ended');
-            _resolvePod();
+            triggerResolve();
           }
         ).then(req => { watchRequest = req; });
+
+        // Backup Poller & Timeout
+        backupInterval = setInterval(() => {
+          if (fs.existsSync(groupIpcDir)) {
+            const files = fs.readdirSync(groupIpcDir);
+            
+            const resultFiles = files.filter(f => f.startsWith('result-') && f.endsWith('.json')).sort();
+            for (const file of resultFiles) {
+              const resultPath = path.join(groupIpcDir, file);
+              try {
+                const content = fs.readFileSync(resultPath, 'utf-8');
+                const parsed = JSON.parse(content);
+                fs.unlinkSync(resultPath);
+                logger.info({ podName, file }, 'Result received via fallback poller');
+                outputChain = outputChain.then(() => safeOnOutput(parsed));
+                resolveFirstOutput(parsed);
+              } catch (err) {}
+            }
+
+            const exitFile = files.find(f => f.startsWith('exit-'));
+            if (exitFile) {
+              logger.info({ podName, exitFile }, 'Exit sentinel found by poller');
+              try { fs.unlinkSync(path.join(groupIpcDir, exitFile)); } catch (e) {}
+              triggerResolve();
+            }
+          }
+
+          if (Date.now() - startTime > MAX_POD_LIFE) {
+            logger.warn({ podName }, 'Pod reached max life, killing');
+            triggerResolve();
+          }
+        }, 5000);
       });
 
-      // Periodic backup poller for results and max life
-      const backupInterval = setInterval(() => {
-        if (fs.existsSync(groupIpcDir)) {
-          const files = fs.readdirSync(groupIpcDir);
-          
-          // Check for missed results
-          const resultFiles = files.filter(f => f.startsWith('result-') && f.endsWith('.json')).sort();
-          for (const file of resultFiles) {
-            const resultPath = path.join(groupIpcDir, file);
-            try {
-              const content = fs.readFileSync(resultPath, 'utf-8');
-              const parsed = JSON.parse(content);
-              fs.unlinkSync(resultPath);
-              logger.info({ podName, file }, 'Result received via fallback poller');
-              outputChain = outputChain.then(() => safeOnOutput(parsed));
-              resolveFirstOutput(parsed);
-            } catch (err) {}
-          }
-
-          // Check for missed exit sentinels
-          const exitFile = files.find(f => f.startsWith('exit-'));
-          if (exitFile) {
-            logger.info({ podName, exitFile }, 'Exit sentinel found by poller');
-            try {
-              fs.unlinkSync(path.join(groupIpcDir, exitFile));
-            } catch (e) {}
-            fsWatcher.close();
-            _resolvePod();
-          }
-        }
-
-        if (Date.now() - startTime > MAX_POD_LIFE) {
-          logger.warn({ podName }, 'Pod reached max life, killing');
-          if (watchRequest) watchRequest.abort();
-          fsWatcher.close();
-          _resolvePod();
-        }
-      }, 5000);
-
       await watchPromise;
-      clearInterval(backupInterval);
-      fsWatcher.close();
+      cleanupWatchers();
 
       if (!firstOutputResolved) {
         try {

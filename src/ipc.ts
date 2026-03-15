@@ -210,6 +210,7 @@ export async function processTaskIpc(
     systemInstruction?: string;
     agentIdentity?: string;
     ephemeral?: boolean;
+    allowSourceAccess?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
     // For rebuild_self/build_project
     imageTag?: string;
@@ -416,6 +417,7 @@ export async function processTaskIpc(
           requiresTrigger: data.requiresTrigger,
           agentIdentity: data.agentIdentity || data.systemInstruction,
           ephemeral: data.ephemeral,
+          allowSourceAccess: !!data.allowSourceAccess,
         });
 
         // Write updated snapshot immediately
@@ -555,6 +557,7 @@ export async function processTaskIpc(
               requiresTrigger: false, // DMs and Threads are exclusive contexts
               agentIdentity: identity,
               ephemeral: data.ephemeral ?? true, // Default to true for dynamic threads
+              allowSourceAccess: !!data.allowSourceAccess,
             });
 
             // Update snapshot immediately so list_groups works

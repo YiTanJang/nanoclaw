@@ -256,6 +256,7 @@ export const Tools = {
       folder: z.string().describe('Sub-agent folder name'),
       agentIdentity: z.string().describe('The permanent identity and core personality for the sub-agent'),
       ephemeral: z.boolean().optional().default(true),
+      allowSourceAccess: z.boolean().optional().describe('DANGEROUS: Grant READ-WRITE access to the orchestrator source code.'),
     }),
     fn: (args: any, context: any) => {
       writeIpcFile(TASKS_DIR, { 
@@ -288,6 +289,7 @@ export const Tools = {
       jid: z.string().optional(),
       requiresTrigger: z.boolean().optional(),
       ephemeral: z.boolean().optional(),
+      allowSourceAccess: z.boolean().optional().describe('DANGEROUS: Grant READ-WRITE access to the orchestrator source code.'),
     }),
     fn: (args: any, context: any) => {
       const jid = args.jid || `internal-${args.folder}-${Math.random().toString(36).slice(2, 8)}`;
